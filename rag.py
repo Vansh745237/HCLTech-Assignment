@@ -1,29 +1,35 @@
-"""Retrieval + GPT-4o answering for the Meridian supply-chain RAG system."""
+﻿"""Retrieval + Groq (Llama) answering for the Meridian supply-chain RAG system."""
 import os
 from functools import lru_cache
 
 import chromadb
 from dotenv import load_dotenv
-from openai import OpenAI
+from groq import Groq
+from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
 CHROMA_DIR = "chroma_db"
 COLLECTION_NAME = "meridian_supply_chain"
-EMBEDDING_MODEL = "text-embedding-3-small"
-LLM_MODEL = "gpt-4o"
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # free, local, must match ingest.py
+LLM_MODEL = "llama-3.3-70b-versatile"  # free via Groq
 DEFAULT_TOP_K = 6
 
 REFUSAL = "The information is not available in the uploaded documents."
 
 
 @lru_cache(maxsize=1)
-def get_openai_client() -> OpenAI:
+def get_groq_client() -> Groq:
     load_dotenv()
-    key = os.getenv("OPENAI_API_KEY")
+    key = os.getenv("GROQ_API_KEY")
     if not key:
-        raise ValueError("OPENAI_API_KEY is missing. Add it to .env.")
-    return OpenAI(api_key=key)
+        raise ValueError("GROQ_API_KEY is missing. Add it to .env.")
+    return Groq(api_key=key)
+
+
+@lru_cache(maxsize=1)
+def get_embedding_model() -> SentenceTransformer:
+    return SentenceTransformer(EMBEDDING_MODEL)
 
 
 @lru_cache(maxsize=1)
@@ -45,11 +51,8 @@ def retrieve(question: str, top_k: int = DEFAULT_TOP_K) -> list[dict]:
     if collection.count() == 0:
         return []
 
-    client = get_openai_client()
-    embedding = client.embeddings.create(
-        model=EMBEDDING_MODEL,
-        input=[question],
-    ).data[0].embedding
+    model = get_embedding_model()
+    embedding = model.encode([question], show_progress_bar=False)[0].tolist()
 
     n = min(max(int(top_k), 1), collection.count())
     results = collection.query(
@@ -99,7 +102,7 @@ def answer_question(question: str, top_k: int = DEFAULT_TOP_K) -> dict:
         return {"answer": REFUSAL, "sources": [], "chunks": []}
 
     context = build_context(chunks)
-    response = get_openai_client().chat.completions.create(
+    response = get_groq_client().chat.completions.create(
         model=LLM_MODEL,
         temperature=0.1,
         messages=[

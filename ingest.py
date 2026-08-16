@@ -1,12 +1,12 @@
-"""Ingest PDF documents into one persistent ChromaDB collection."""
+﻿"""Ingest PDF documents into one persistent ChromaDB collection."""
 from pathlib import Path
 from typing import Iterable
 
 import chromadb
 from dotenv import load_dotenv
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from openai import OpenAI
 from pypdf import PdfReader
+from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
@@ -15,15 +15,17 @@ CHROMA_DIR = "chroma_db"
 COLLECTION_NAME = "meridian_supply_chain"
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 200
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # free, local, runs on CPU
 BATCH_SIZE = 100
 
+_model = None
 
-def get_openai_client() -> OpenAI:
-    client = OpenAI()
-    if not client.api_key:
-        raise ValueError("OPENAI_API_KEY is missing. Add it to .env.")
-    return client
+
+def get_embedding_model() -> SentenceTransformer:
+    global _model
+    if _model is None:
+        _model = SentenceTransformer(EMBEDDING_MODEL)
+    return _model
 
 
 def load_pdfs(pdf_files: Iterable[Path] | None = None) -> list[dict]:
@@ -61,20 +63,20 @@ def create_chunks(documents: list[dict]) -> list[dict]:
     return chunks
 
 
-def embed_texts(client: OpenAI, texts: list[str]) -> list[list[float]]:
+def embed_texts(model: SentenceTransformer, texts: list[str]) -> list[list[float]]:
     embeddings = []
     for start in range(0, len(texts), BATCH_SIZE):
         batch = texts[start:start + BATCH_SIZE]
-        response = client.embeddings.create(model=EMBEDDING_MODEL, input=batch)
-        embeddings.extend(item.embedding for item in response.data)
+        vectors = model.encode(batch, show_progress_bar=False)
+        embeddings.extend(vectors.tolist())
     return embeddings
 
 
-def store_in_chroma(chunks: list[dict], client: OpenAI | None = None) -> int:
+def store_in_chroma(chunks: list[dict], model: SentenceTransformer | None = None) -> int:
     if not chunks:
         raise ValueError("No text chunks were created from the PDFs.")
-    client = client or get_openai_client()
-    embeddings = embed_texts(client, [c["text"] for c in chunks])
+    model = model or get_embedding_model()
+    embeddings = embed_texts(model, [c["text"] for c in chunks])
 
     chroma = chromadb.PersistentClient(path=CHROMA_DIR)
     collection = chroma.get_or_create_collection(
@@ -82,8 +84,6 @@ def store_in_chroma(chunks: list[dict], client: OpenAI | None = None) -> int:
         metadata={"embedding_model": EMBEDDING_MODEL},
     )
 
-    # Re-indexing is deterministic: remove existing chunks and replace them with
-    # the current contents of data/. This prevents stale/deleted documents.
     if collection.count() > 0:
         collection.delete(where={"_source": "ingestion"})
 
