@@ -4,14 +4,14 @@ from functools import lru_cache
 
 import chromadb
 from dotenv import load_dotenv
+from fastembed import TextEmbedding
 from groq import Groq
-from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
 CHROMA_DIR = "chroma_db"
 COLLECTION_NAME = "meridian_supply_chain"
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # free, local, must match ingest.py
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"  # free, local, must match ingest.py
 LLM_MODEL = "llama-3.3-70b-versatile"  # free via Groq
 DEFAULT_TOP_K = 6
 
@@ -28,8 +28,8 @@ def get_groq_client() -> Groq:
 
 
 @lru_cache(maxsize=1)
-def get_embedding_model() -> SentenceTransformer:
-    return SentenceTransformer(EMBEDDING_MODEL)
+def get_embedding_model() -> TextEmbedding:
+    return TextEmbedding(model_name=EMBEDDING_MODEL)
 
 
 @lru_cache(maxsize=1)
@@ -52,7 +52,7 @@ def retrieve(question: str, top_k: int = DEFAULT_TOP_K) -> list[dict]:
         return []
 
     model = get_embedding_model()
-    embedding = model.encode([question], show_progress_bar=False)[0].tolist()
+    embedding = list(model.embed([question]))[0].tolist()
 
     n = min(max(int(top_k), 1), collection.count())
     results = collection.query(

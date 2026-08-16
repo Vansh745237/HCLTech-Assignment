@@ -4,9 +4,9 @@ from typing import Iterable
 
 import chromadb
 from dotenv import load_dotenv
+from fastembed import TextEmbedding
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
@@ -15,16 +15,16 @@ CHROMA_DIR = "chroma_db"
 COLLECTION_NAME = "meridian_supply_chain"
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 200
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # free, local, runs on CPU
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"  # free, local, lightweight (no torch needed)
 BATCH_SIZE = 100
 
 _model = None
 
 
-def get_embedding_model() -> SentenceTransformer:
+def get_embedding_model() -> TextEmbedding:
     global _model
     if _model is None:
-        _model = SentenceTransformer(EMBEDDING_MODEL)
+        _model = TextEmbedding(model_name=EMBEDDING_MODEL)
     return _model
 
 
@@ -63,16 +63,16 @@ def create_chunks(documents: list[dict]) -> list[dict]:
     return chunks
 
 
-def embed_texts(model: SentenceTransformer, texts: list[str]) -> list[list[float]]:
+def embed_texts(model: TextEmbedding, texts: list[str]) -> list[list[float]]:
     embeddings = []
     for start in range(0, len(texts), BATCH_SIZE):
         batch = texts[start:start + BATCH_SIZE]
-        vectors = model.encode(batch, show_progress_bar=False)
-        embeddings.extend(vectors.tolist())
+        vectors = list(model.embed(batch))
+        embeddings.extend(v.tolist() for v in vectors)
     return embeddings
 
 
-def store_in_chroma(chunks: list[dict], model: SentenceTransformer | None = None) -> int:
+def store_in_chroma(chunks: list[dict], model: TextEmbedding | None = None) -> int:
     if not chunks:
         raise ValueError("No text chunks were created from the PDFs.")
     model = model or get_embedding_model()
